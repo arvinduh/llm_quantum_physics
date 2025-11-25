@@ -101,7 +101,7 @@ class LlmEvaluator:
     }
 
     try:
-      raw_response = self.client.call_api(
+      raw_response, elapsed_time = self.client.call_api(
         user_prompt, response_format=response_format
       )
       # Parse the JSON response
@@ -132,18 +132,20 @@ class LlmEvaluator:
           )
           result[model_name] = (None, "Evaluation failed")
 
-      return result
+      return result, elapsed_time
 
     except (llm.LlmApiError, requests.exceptions.RequestException) as e:
       logging.error("Evaluator call failed: %s", e)
-      return {
-        model_name: (None, f"API Error: {e}") for model_name in model_names
-      }
+      return (
+        {model_name: (None, f"API Error: {e}") for model_name in model_names},
+        0.0,
+      )
     except (json.JSONDecodeError, KeyError) as e:
       logging.error("Failed to parse evaluator JSON response: %s", e)
-      return {
-        model_name: (None, f"Parse Error: {e}") for model_name in model_names
-      }
+      return (
+        {model_name: (None, f"Parse Error: {e}") for model_name in model_names},
+        0.0,
+      )
 
   def evaluate_solution(
     self, question: str, generated_response: str, true_answer: str
@@ -191,6 +193,9 @@ class LlmEvaluator:
 
     Returns:
         A tuple of (EvaluationScore, elapsed_time_seconds)
+        The EvaluationScore.reasoning contains a JSON string with:
+        - "rankings": list of integers where rankings[i] is the rank (1-N) for response i
+        - "explanation": string explaining the ranking rationale
     """
     # Format the list of responses for the prompt
     response_block = ""
@@ -205,17 +210,50 @@ class LlmEvaluator:
       {response_block}
     """)
 
+    # Create JSON schema for structured rankings
+    num_responses = len(responses)
+    response_format = {
+      "type": "json_schema",
+      "json_schema": {
+        "name": "hypothesis_rankings",
+        "strict": True,
+        "schema": {
+          "type": "object",
+          "properties": {
+            "rankings": {
+              "type": "array",
+              "description": f"MUST contain exactly {num_responses} integers. rankings[i] is the rank (1 to {num_responses}) assigned to Response {{i+1}}. Lower rank means better quality. Each rank value must be used exactly once.",
+              "items": {"type": "integer"},
+            },
+            "explanation": {
+              "type": "string",
+              "description": "Brief explanation of the ranking rationale and why each response was ranked as it was.",
+            },
+          },
+          "required": ["rankings", "explanation"],
+          "additionalProperties": False,
+        },
+      },
+    }
+
     try:
-      raw_ranking_text, elapsed_time = self.client.call_api(user_prompt)
+      raw_response, elapsed_time = self.client.call_api(
+        user_prompt, response_format=response_format
+      )
+      # Store the full JSON response in reasoning for later parsing
       return EvaluationScore(
         metric_name="llm_hypothesis_ranking",
         score=None,  # No single score for a ranking
-        reasoning=raw_ranking_text,
+        reasoning=raw_response,  # JSON string
       ), elapsed_time
     except (llm.LlmApiError, requests.exceptions.RequestException) as e:
       logging.error("Ranker call failed: %s", e)
+      # Return a JSON string with error info
+      error_json = json.dumps(
+        {"rankings": [0] * num_responses, "explanation": f"Ranking failed: {e}"}
+      )
       return EvaluationScore(
         metric_name="llm_hypothesis_ranking",
         score=None,
-        reasoning=f"Ranking failed: {e}",
+        reasoning=error_json,
       ), 0.0

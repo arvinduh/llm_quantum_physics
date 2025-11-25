@@ -1,6 +1,7 @@
 """JSON file loader implementation."""
 
 import json
+import threading
 
 from absl import logging
 
@@ -34,6 +35,7 @@ class JsonLoader(BaseQuestionLoader):
 
     # State for get_next_question()
     self._next_index = 0
+    self._sequential_lock = threading.Lock()  # Protect sequential access
 
     # Call super().__init__ after questions are loaded.
     super().__init__()
@@ -66,6 +68,7 @@ class JsonLoader(BaseQuestionLoader):
     """Returns the next sequential unsolvable question.
 
     This method's history is independent of get_random_question.
+    Thread-safe.
 
     Returns:
       A tuple of (question_identifier, question_content).
@@ -73,17 +76,19 @@ class JsonLoader(BaseQuestionLoader):
     Raises:
       IndexError: If all sequential questions have been used.
     """
-    if self._next_index >= len(self.questions):
-      raise IndexError("All sequential unsolvable questions have been used.")
+    with self._sequential_lock:
+      if self._next_index >= len(self.questions):
+        raise IndexError("All sequential unsolvable questions have been used.")
 
-    identifier = str(self._next_index)
-    question_content = self._load_question(identifier)
-    self._next_index += 1
-    return identifier, question_content
+      identifier = str(self._next_index)
+      question_content = self._load_question(identifier)
+      self._next_index += 1
+      return identifier, question_content
 
   def reset_sequential_history(self) -> None:
-    """Resets the history for get_next_question."""
-    self._next_index = 0
+    """Resets the history for get_next_question. Thread-safe."""
+    with self._sequential_lock:
+      self._next_index = 0
 
   def reset_all_history(self) -> None:
     """Resets all tracking history."""

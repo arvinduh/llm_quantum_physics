@@ -77,15 +77,24 @@ def analyze_unsolvable_question(
   attempts = 0
   q_id = None
   question = None
+  has_reset = False  # Track if we've already reset once
 
   while attempts < max_attempts:
     try:
       q_id, q_content = dataset.get_next_question()
       question = q_content["question"]
     except IndexError:
-      # Reached end of dataset, reset and try again
+      # Reached end of dataset
+      if has_reset:
+        # We've already reset once and reached the end again
+        # This means all questions have been solved
+        raise ValueError(
+          "All unsolvable questions have already been solved. "
+          "Delete output files or reset the output directory to run again."
+        )
       logging.info("Reached end of dataset, resetting")
       dataset.reset_sequential_history()
+      has_reset = True
       try:
         q_id, q_content = dataset.get_next_question()
         question = q_content["question"]

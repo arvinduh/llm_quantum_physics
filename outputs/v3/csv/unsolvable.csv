@@ -1,0 +1,10 @@
+question_id,model,time,anthropic/claude-sonnet-4.5_rank,google/gemini-2.5-pro_rank,openai/gpt-5_rank
+2,anthropic/claude-sonnet-4.5,40.077311992645264,0,2,2
+2,google/gemini-2.5-pro,49.67870831489563,0,3,3
+2,openai/gpt-5,138.75655722618103,0,1,1
+1,anthropic/claude-sonnet-4.5,39.34448742866516,0,3,3
+1,google/gemini-2.5-pro,47.88424801826477,0,2,2
+1,openai/gpt-5,154.19990634918213,0,1,1
+0,anthropic/claude-sonnet-4.5,33.568960189819336,0,3,3
+0,google/gemini-2.5-pro,37.771313190460205,0,2,2
+0,openai/gpt-5,231.82823872566223,0,1,1

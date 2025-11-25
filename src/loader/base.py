@@ -2,6 +2,7 @@
 
 import abc
 import random
+import threading
 from typing import Any, TypeAlias
 
 QuestionContentType: TypeAlias = dict[str, Any]
@@ -23,6 +24,7 @@ class BaseQuestionLoader(abc.ABC):
       self._load_all_identifiers()
     )
     self._random_used_identifiers: set[QuestionIdentifier] = set()
+    self._random_lock = threading.Lock()  # Protect random question access
 
   @abc.abstractmethod
   def _load_all_identifiers(self) -> set[QuestionIdentifier]:
@@ -62,6 +64,7 @@ class BaseQuestionLoader(abc.ABC):
     """Returns a random, previously unused question.
 
     This tracks its own "used" list, independent of other methods.
+    Thread-safe.
 
     Returns:
       A tuple of (question_identifier, question_content).
@@ -69,19 +72,21 @@ class BaseQuestionLoader(abc.ABC):
     Raises:
       IndexError: If all questions have been used.
     """
-    available_identifiers = (
-      self._all_identifiers - self._random_used_identifiers
-    )
-    if not available_identifiers:
-      raise IndexError("All questions have been used by get_random_question.")
+    with self._random_lock:
+      available_identifiers = (
+        self._all_identifiers - self._random_used_identifiers
+      )
+      if not available_identifiers:
+        raise IndexError("All questions have been used by get_random_question.")
 
-    identifier = random.choice(list(available_identifiers))
-    self._random_used_identifiers.add(identifier)
-    return identifier, self._load_question(identifier)
+      identifier = random.choice(list(available_identifiers))
+      self._random_used_identifiers.add(identifier)
+      return identifier, self._load_question(identifier)
 
   def reset_random_history(self) -> None:
-    """Resets the history for get_random_question."""
-    self._random_used_identifiers.clear()
+    """Resets the history for get_random_question. Thread-safe."""
+    with self._random_lock:
+      self._random_used_identifiers.clear()
 
   def get_next_question(
     self,

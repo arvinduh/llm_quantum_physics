@@ -78,13 +78,22 @@ def analyze_solvable_question(
   attempts = 0
   q_id = None
   q_content = None
+  has_reset = False  # Track if we've already reset once
 
   while attempts < max_attempts:
     try:
       q_id, q_content = dataset.get_random_question()
     except IndexError:
+      if has_reset:
+        # We've already reset once and ran out of questions again
+        # This means all questions have been solved
+        raise ValueError(
+          "All solvable questions have already been solved. "
+          "Delete output files or reset the output directory to run again."
+        )
       logging.warning("All random questions have been used. Resetting history.")
       dataset.reset_random_history()
+      has_reset = True
       try:
         q_id, q_content = dataset.get_random_question()
       except IndexError:

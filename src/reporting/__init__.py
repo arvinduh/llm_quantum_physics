@@ -1,5 +1,10 @@
 """Reporting module for generating markdown reports."""
 
+from src.reporting.csv_writer import (
+  write_evaluations_csv,
+  write_solvable_csv,
+  write_unsolvable_csv,
+)
 from src.reporting.markdown_writer import (
   append_hypothesis,
   append_no_hypotheses_message,
@@ -34,4 +39,7 @@ __all__ = [
   "append_no_hypotheses_message",
   "append_question_separator",
   "write_unsolvable_timing_summary",
+  "write_solvable_csv",
+  "write_unsolvable_csv",
+  "write_evaluations_csv",
 ]
