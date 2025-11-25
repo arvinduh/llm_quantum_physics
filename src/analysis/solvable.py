@@ -27,9 +27,11 @@ def _query_solver(client: llm.LlmClient, question: str) -> ModelResponse:
   """
   logging.info("Querying solver: %s", client.model.value)
   try:
-    response_text = client.call_api(question)
+    response_text, elapsed_time = client.call_api(question)
     return ModelResponse(
-      model_name=client.model.value, response_text=response_text
+      model_name=client.model.value,
+      response_text=response_text,
+      generation_time=elapsed_time,
     )
   except (llm.LlmApiError, requests.exceptions.RequestException) as e:
     logging.error(
@@ -39,6 +41,7 @@ def _query_solver(client: llm.LlmClient, question: str) -> ModelResponse:
     return ModelResponse(
       model_name=client.model.value,
       response_text=error_message,
+      generation_time=0.0,
     )
 
 
@@ -188,10 +191,10 @@ def analyze_solvable_question(
         evaluator_client.model.value,
       )
       judge = evaluation.LlmEvaluator(judge_client=evaluator_client)
-      scores = judge.evaluate_all_solutions(
+      scores, elapsed_time = judge.evaluate_all_solutions(
         question, valid_responses, true_answer
       )
-      return evaluator_client.model.value, scores
+      return evaluator_client.model.value, scores, elapsed_time
 
     # Run all evaluators in parallel and collect results
     with ThreadPoolExecutor(max_workers=len(evaluator_clients)) as executor:
@@ -202,8 +205,8 @@ def analyze_solvable_question(
 
       try:
         for future in as_completed(future_to_evaluator):
-          evaluator_name, results = future.result()
-          evaluator_results[evaluator_name] = results
+          evaluator_name, results, eval_time = future.result()
+          evaluator_results[evaluator_name] = (results, eval_time)
       except KeyboardInterrupt:
         logging.warning(
           "Keyboard interrupt received, canceling evaluator tasks..."
@@ -218,7 +221,7 @@ def analyze_solvable_question(
   for model_resp in all_responses:
     for evaluator_name in evaluator_names:
       if evaluator_name in evaluator_results:
-        results = evaluator_results[evaluator_name]
+        results, eval_time = evaluator_results[evaluator_name]
         if model_resp.model_name in results:
           score_value, reasoning = results[model_resp.model_name]
           model_resp.llm_evaluations.append(
@@ -229,6 +232,7 @@ def analyze_solvable_question(
                 score=score_value,
                 reasoning=reasoning,
               ),
+              evaluation_time=eval_time,
             )
           )
 
@@ -245,6 +249,25 @@ def analyze_solvable_question(
   # Write evaluator reasoning section
   reporting.start_evaluator_reasoning_section(markdown_path)
   _write_evaluator_reasoning(markdown_path, all_responses, evaluator_names)
+
+  # Write timing summary
+  generation_times = {
+    resp.model_name: resp.generation_time
+    for resp in all_responses
+    if resp.generation_time > 0
+  }
+  evaluation_times = {}
+  for model_resp in all_responses:
+    for eval_item in model_resp.llm_evaluations:
+      if eval_item.evaluation_time > 0:
+        evaluation_times[eval_item.evaluator_model_name] = (
+          eval_item.evaluation_time
+        )
+
+  if generation_times or evaluation_times:
+    reporting.write_timing_summary(
+      markdown_path, generation_times, evaluation_times
+    )
 
   # 5. Compile and return the final report
   logging.info("Solvable question report saved to: %s", markdown_path)

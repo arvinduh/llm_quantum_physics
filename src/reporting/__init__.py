@@ -12,8 +12,10 @@ from src.reporting.markdown_writer import (
   write_analysis_table_row,
   write_evaluator_reasoning,
   write_solvable_header,
+  write_timing_summary,
   write_unsolvable_header,
   write_unsolvable_question_header,
+  write_unsolvable_timing_summary,
 )
 
 __all__ = [
@@ -23,6 +25,7 @@ __all__ = [
   "write_analysis_table_row",
   "start_evaluator_reasoning_section",
   "write_evaluator_reasoning",
+  "write_timing_summary",
   "write_unsolvable_header",
   "write_unsolvable_question_header",
   "append_hypothesis",
@@ -30,4 +33,5 @@ __all__ = [
   "append_ranking",
   "append_no_hypotheses_message",
   "append_question_separator",
+  "write_unsolvable_timing_summary",
 ]

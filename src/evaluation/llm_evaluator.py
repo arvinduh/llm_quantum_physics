@@ -29,7 +29,7 @@ class LlmEvaluator:
 
   def evaluate_all_solutions(
     self, question: str, responses: dict[str, str], true_answer: str
-  ) -> dict[str, tuple[float | None, str]]:
+  ) -> tuple[dict[str, tuple[float | None, str]], float]:
     """Uses the injected LLM client to grade all answers at once.
 
     Args:
@@ -38,8 +38,9 @@ class LlmEvaluator:
         true_answer: The correct answer to the question.
 
     Returns:
-        Dictionary mapping model names to tuples of (score, reasoning).
-        Score is 1-5 or None if parsing failed.
+        A tuple of (evaluations_dict, elapsed_time) where:
+        - evaluations_dict maps model names to tuples of (score, reasoning)
+        - elapsed_time is the time in seconds to perform all evaluations
     """
     # Format all responses for the prompt
     response_block = ""
@@ -160,7 +161,7 @@ class LlmEvaluator:
     """)
 
     try:
-      raw_response = self.client.call_api(user_prompt)
+      raw_response, _ = self.client.call_api(user_prompt)
 
       # Try to parse the score
       match = _SCORE_PARSER.search(raw_response)
@@ -185,8 +186,12 @@ class LlmEvaluator:
 
   def rank_hypotheses(
     self, question: str, responses: Sequence[str]
-  ) -> EvaluationScore:
-    """Uses the injected LLM client to rank hypotheses."""
+  ) -> tuple[EvaluationScore, float]:
+    """Uses the injected LLM client to rank hypotheses.
+
+    Returns:
+        A tuple of (EvaluationScore, elapsed_time_seconds)
+    """
     # Format the list of responses for the prompt
     response_block = ""
     for i, resp in enumerate(responses, 1):
@@ -201,16 +206,16 @@ class LlmEvaluator:
     """)
 
     try:
-      raw_ranking_text = self.client.call_api(user_prompt)
+      raw_ranking_text, elapsed_time = self.client.call_api(user_prompt)
       return EvaluationScore(
         metric_name="llm_hypothesis_ranking",
         score=None,  # No single score for a ranking
         reasoning=raw_ranking_text,
-      )
+      ), elapsed_time
     except (llm.LlmApiError, requests.exceptions.RequestException) as e:
       logging.error("Ranker call failed: %s", e)
       return EvaluationScore(
         metric_name="llm_hypothesis_ranking",
         score=None,
         reasoning=f"Ranking failed: {e}",
-      )
+      ), 0.0

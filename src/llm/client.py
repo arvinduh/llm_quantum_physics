@@ -144,7 +144,9 @@ class LlmClient:
       "Content-Type": "application/json",
     }
 
-  def call_api(self, prompt: str, response_format: dict | None = None) -> str:
+  def call_api(
+    self, prompt: str, response_format: dict | None = None
+  ) -> tuple[str, float]:
     """Handles the core logic of calling the LLM API with retries.
 
     Args:
@@ -152,7 +154,7 @@ class LlmClient:
         response_format: Optional structured output format specification.
 
     Returns:
-        The text content of the model's response.
+        A tuple of (response_text, elapsed_time_seconds).
 
     Raises:
         LlmApiError: If the API call fails after all retries.
@@ -194,7 +196,7 @@ class LlmClient:
             elapsed_time,
           )
           data = response.json()
-          return data["choices"][0]["message"]["content"]
+          return data["choices"][0]["message"]["content"], elapsed_time
         elif response.status_code == requests.codes.bad_request:
           error_message = _parse_api_error_message(response)
           logging.error(

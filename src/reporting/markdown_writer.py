@@ -117,6 +117,70 @@ def write_evaluator_reasoning(
     f.write(f"{reasoning}\n\n")
 
 
+def write_timing_summary(
+  filepath: str,
+  generation_times: dict[str, float],
+  evaluation_times: dict[str, float],
+) -> None:
+  """Writes a timing summary section to the markdown file.
+
+  Args:
+      filepath: Path to the markdown file.
+      generation_times: Dict mapping model names to generation times in seconds.
+      evaluation_times: Dict mapping evaluator names to evaluation times in seconds.
+  """
+  with open(filepath, "a", encoding="utf-8") as f:
+    f.write("\n## Timing Summary\n\n")
+    f.write("| Model | Generation Time | Evaluation Time |\n")
+    f.write("| --- | --- | --- |\n")
+
+    # Get all unique model names from both dicts
+    all_models = sorted(
+      set(generation_times.keys()) | set(evaluation_times.keys())
+    )
+
+    for model_name in all_models:
+      gen_time = generation_times.get(model_name)
+      eval_time = evaluation_times.get(model_name)
+
+      gen_str = f"{gen_time:.2f}s" if gen_time is not None else "N/A"
+      eval_str = f"{eval_time:.2f}s" if eval_time is not None else "N/A"
+
+      f.write(f"| {model_name} | {gen_str} | {eval_str} |\n")
+
+
+def write_unsolvable_timing_summary(
+  filepath: str,
+  generation_times: dict[str, float],
+  ranking_times: dict[str, float],
+) -> None:
+  """Writes a timing summary for unsolvable question analysis.
+
+  Args:
+      filepath: Path to the markdown file.
+      generation_times: Dict mapping model names to hypothesis generation times.
+      ranking_times: Dict mapping ranker names to ranking times in seconds.
+  """
+  with open(filepath, "a", encoding="utf-8") as f:
+    f.write("\n## Timing Summary\n\n")
+    f.write("| Model | Generation Time | Ranking Time |\n")
+    f.write("| --- | --- | --- |\n")
+
+    # Get all unique model names from both dicts
+    all_models = sorted(
+      set(generation_times.keys()) | set(ranking_times.keys())
+    )
+
+    for model_name in all_models:
+      gen_time = generation_times.get(model_name)
+      rank_time = ranking_times.get(model_name)
+
+      gen_str = f"{gen_time:.2f}s" if gen_time is not None else "N/A"
+      rank_str = f"{rank_time:.2f}s" if rank_time is not None else "N/A"
+
+      f.write(f"| {model_name} | {gen_str} | {rank_str} |\n")
+
+
 def write_unsolvable_header(filepath: str) -> None:
   """Initializes the unsolvable question markdown file.
 

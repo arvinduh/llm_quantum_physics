@@ -27,10 +27,11 @@ def _query_theorist(client: llm.LlmClient, question: str) -> ModelHypothesis:
   """
   logging.info("Querying solver: %s", client.model.value)
   try:
-    response_text = client.call_api(question)
+    response_text, elapsed_time = client.call_api(question)
     return ModelHypothesis(
       model_name=client.model.value,
       response_text=response_text,
+      generation_time=elapsed_time,
     )
   except (llm.LlmApiError, requests.exceptions.RequestException) as e:
     logging.error(
@@ -42,6 +43,7 @@ def _query_theorist(client: llm.LlmClient, question: str) -> ModelHypothesis:
     return ModelHypothesis(
       model_name=client.model.value,
       response_text=error_message,
+      generation_time=0.0,
     )
 
 
@@ -171,8 +173,10 @@ def analyze_unsolvable_question(
         ranker_client.model.value,
       )
       judge = evaluation.LlmEvaluator(judge_client=ranker_client)
-      ranking = judge.rank_hypotheses(question, valid_hypotheses_text)
-      return ranker_client.model.value, ranking
+      ranking, elapsed_time = judge.rank_hypotheses(
+        question, valid_hypotheses_text
+      )
+      return ranker_client.model.value, ranking, elapsed_time
 
     # Run all rankers in parallel and collect results
     ranker_results = {}
@@ -184,8 +188,8 @@ def analyze_unsolvable_question(
 
       try:
         for future in as_completed(future_to_ranker):
-          ranker_name, ranking = future.result()
-          ranker_results[ranker_name] = ranking
+          ranker_name, ranking, rank_time = future.result()
+          ranker_results[ranker_name] = (ranking, rank_time)
       except KeyboardInterrupt:
         logging.warning(
           "Keyboard interrupt received, canceling ranker tasks..."
@@ -202,14 +206,32 @@ def analyze_unsolvable_question(
     for client in ranking_clients:
       ranker_name = client.model.value
       if ranker_name in ranker_results:
-        ranking = ranker_results[ranker_name]
+        ranking, rank_time = ranker_results[ranker_name]
         all_rankings.append(
           CrossRanking(
             ranker_model_name=ranker_name,
             ranking=ranking,
+            ranking_time=rank_time,
           )
         )
         reporting.append_ranking(markdown_path, ranker_name, ranking.reasoning)
+
+  # Write timing summary
+  generation_times = {
+    hyp.model_name: hyp.generation_time
+    for hyp in hypotheses
+    if hyp.generation_time > 0
+  }
+  ranking_times = {
+    rank.ranker_model_name: rank.ranking_time
+    for rank in all_rankings
+    if rank.ranking_time > 0
+  }
+
+  if generation_times or ranking_times:
+    reporting.write_unsolvable_timing_summary(
+      markdown_path, generation_times, ranking_times
+    )
 
   # Compile report for this question
   report = UnsolvableQuestionReport(
