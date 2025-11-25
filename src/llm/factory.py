@@ -8,7 +8,7 @@ from src.llm.models import Model
 DEFAULT_MODELS = [
   Model.GEMINI_PRO_2_5,
   Model.GPT_5,
-  Model.GROK_4,
+  Model.CLAUDE_SONNET_4_5,
 ]
 
 

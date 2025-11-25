@@ -16,8 +16,7 @@ from src import analysis, llm, loader
 # --- Constants ---
 DATASET_HANDLE: str = "mohammadbinaftab/physicsqa"
 UNSOLVABLE_QUESTIONS_PATH: str = "data/unsolvable.json"
-SOLVABLE_REPORT_PATH: str = "solvable_report.md"
-UNSOLVABLE_REPORT_PATH: str = "unsolvable_report.md"
+OUTPUT_DIR: str = "outputs"
 
 # Define a flag for how many solvable questions to run
 _SOLVABLE_ITERATIONS = flags.DEFINE_integer(
@@ -65,11 +64,10 @@ def main(argv: Sequence[str]) -> None:
       solver_clients=solver_clients,
       evaluator_clients=evaluator_clients,
       dataset=solvable_dataset,
-      markdown_path=SOLVABLE_REPORT_PATH,
+      output_dir=OUTPUT_DIR,
     )
     solvable_reports.append(report)
     logging.info("--- Finished Iteration %d ---", i + 1)
-    logging.info("Solvable analysis report saved to: %s", SOLVABLE_REPORT_PATH)
 
   # --- 4. Run Unsolvable Question Analysis ---
   logging.info("Running unsolvable question analysis...")
@@ -77,12 +75,10 @@ def main(argv: Sequence[str]) -> None:
     solver_clients=theorist_clients,
     ranking_clients=ranking_clients,
     dataset=unsolvable_dataset,
-    markdown_path=UNSOLVABLE_REPORT_PATH,
+    output_dir=OUTPUT_DIR,
   )
 
-  logging.info(
-    "Unsolvable analysis report saved to: %s", UNSOLVABLE_REPORT_PATH
-  )
+  logging.info("Unsolvable analysis complete. Reports saved to %s", OUTPUT_DIR)
 
   logging.info("Benchmark run complete.")
 

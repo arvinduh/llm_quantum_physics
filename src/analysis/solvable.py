@@ -1,6 +1,8 @@
 """Solvable question analysis functionality."""
 
 import logging
+import threading
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import requests
 
@@ -13,22 +15,49 @@ from src.analysis.models import (
 from src.loader import KaggleLoader
 
 
+def _query_solver(client: llm.LlmClient, question: str) -> ModelResponse:
+  """Query a single solver model and return the response.
+
+  Args:
+      client: The LLM client to query.
+      question: The question to ask.
+
+  Returns:
+      ModelResponse with the result or error message.
+  """
+  logging.info("Querying solver: %s", client.model.value)
+  try:
+    response_text = client.call_api(question)
+    return ModelResponse(
+      model_name=client.model.value, response_text=response_text
+    )
+  except (llm.LlmApiError, requests.exceptions.RequestException) as e:
+    logging.error(
+      "API call failed for solver model %s: %s", client.model.value, e
+    )
+    error_message = f"API Error: {e}"
+    return ModelResponse(
+      model_name=client.model.value,
+      response_text=error_message,
+    )
+
+
 def analyze_solvable_question(
   solver_clients: list[llm.LlmClient],
   evaluator_clients: list[llm.LlmClient],
   dataset: KaggleLoader,
-  markdown_path: str,
+  output_dir: str,
 ) -> SolvableQuestionReport:
   """Runs one random solvable question against all solvers.
 
   Then, all evaluators score all solver responses using batch evaluation.
-  Results are written to markdown incrementally as they are generated.
+  Results are written to a markdown file named with the question ID.
 
   Args:
       solver_clients: List of clients to generate solutions.
       evaluator_clients: List of clients to judge solutions.
       dataset: The KaggleLoader for solvable questions.
-      markdown_path: Path to the markdown file to write results to.
+      output_dir: Directory to save the output markdown file.
 
   Returns:
       A SolvableQuestionReport with comprehensive cross-evaluation.
@@ -37,6 +66,8 @@ def analyze_solvable_question(
       KeyError: If the loaded question content does not contain
           'message_1' (question) or 'message_2' (answer) keys.
   """
+  import os
+
   # 1. Get a random question
   logging.info("Retrieving random solvable question")
   try:
@@ -57,40 +88,40 @@ def analyze_solvable_question(
     ) from e
   logging.info("Selected solvable question ID: %s", q_id)
 
+  # 3. Generate output path for this specific question
+  os.makedirs(output_dir, exist_ok=True)
+  markdown_path = os.path.join(output_dir, f"solvable_{q_id}.md")
+
   # Write question and true answer to markdown
   reporting.write_solvable_header(markdown_path, q_id, question, true_answer)
 
-  # 3. Phase 1: Get all responses
+  # 3. Phase 1: Get all responses in parallel
   all_responses: list[ModelResponse] = []
   valid_responses: dict[str, str] = {}  # For batch evaluation
+  file_lock = threading.Lock()  # Protect concurrent file writes
 
-  for client in solver_clients:
-    logging.info("Querying solver: %s", client.model.value)
-    try:
-      response_text = client.call_api(question)
-      all_responses.append(
-        ModelResponse(
-          model_name=client.model.value, response_text=response_text
+  logging.info("Querying %d solver models in parallel...", len(solver_clients))
+  with ThreadPoolExecutor(max_workers=len(solver_clients)) as executor:
+    # Submit all tasks
+    future_to_client = {
+      executor.submit(_query_solver, client, question): client
+      for client in solver_clients
+    }
+
+    # Collect results as they complete
+    for future in as_completed(future_to_client):
+      model_resp = future.result()
+      all_responses.append(model_resp)
+
+      # Write response to markdown immediately (thread-safe)
+      with file_lock:
+        reporting.append_response(
+          markdown_path, model_resp.model_name, model_resp.response_text
         )
-      )
-      valid_responses[client.model.value] = response_text
-      reporting.append_response(
-        markdown_path, client.model.value, response_text
-      )
-    except (llm.LlmApiError, requests.exceptions.RequestException) as e:
-      logging.error(
-        "API call failed for solver model %s: %s", client.model.value, e
-      )
-      error_message = f"API Error: {e}"
-      all_responses.append(
-        ModelResponse(
-          model_name=client.model.value,
-          response_text=error_message,
-        )
-      )
-      reporting.append_response(
-        markdown_path, client.model.value, error_message
-      )
+
+      # Track valid responses for batch evaluation
+      if not model_resp.response_text.startswith("API Error:"):
+        valid_responses[model_resp.model_name] = model_resp.response_text
 
   # 4. Phase 2: Cross-Evaluation (Batch mode)
   logging.info("Starting batch cross-evaluation phase")
@@ -142,6 +173,7 @@ def analyze_solvable_question(
   _write_analysis_table_rows(markdown_path, all_responses)
 
   # 5. Compile and return the final report
+  logging.info("Solvable question report saved to: %s", markdown_path)
   return SolvableQuestionReport(
     question_id=q_id,
     question=question,
