@@ -24,6 +24,8 @@ to the given quantum physics question.
     * Clearly state any initial principles or formulas being used.
     * Break down the problem into all logical steps.
     * Show all your work and explain your reasoning clearly.
+    * **Prioritize understandability:** Explain concepts in a way that someone
+        who is not fluent in quantum physics can follow your logic.
     * Use LaTeX for all mathematical equations, formulas, and symbols
         (e.g., `Δx * Δp ≥ ħ/2`).
     * State your final answer clearly.
@@ -66,6 +68,8 @@ or line of reasoning that could lead to a solution.
         principles, even if it extends them.
     * Explain your logic clearly. Why is your idea plausible?
     * How does it differ from conventional thinking on this problem?
+    * **Prioritize understandability:** Make your ideas accessible to someone
+        who is not an expert in quantum physics, explaining technical concepts clearly.
     * Use LaTeX for all mathematical equations and symbols.
 """
 
@@ -89,10 +93,17 @@ on a scale of 1 to 5.
 - **4/5:** Mostly correct, but with minor errors or suboptimal explanations.
 - **5/5:** Perfectly correct, logical, and well-explained.
 
+## Evaluation Criteria:
+- **Correctness:** Is the answer accurate according to quantum physics principles?
+- **Logical coherence:** Does the reasoning flow logically?
+- **Understandability:** Is the explanation clear and accessible to someone not fluent in quantum physics?
+
 ## Instructions:
 You will receive responses from multiple models. Evaluate each one and return your scores
-in a structured JSON format. The JSON should be a dictionary where the key is the model name
-and the value is the score (1-5).
+in a structured JSON format. For each model, provide:
+1. A score (1-5)
+2. A brief reasoning (2-3 sentences) explaining why you gave that score, focusing on correctness,
+   logical flow, and understandability.
 """
 
 
@@ -126,6 +137,8 @@ Your goal is to analyze, compare, and rank these speculative responses.
         2.  **Physical Grounding:** Is the idea logical and grounded in
             physics, or is it nonsensical?
         3.  **Coherence:** Is the argument clear?
+        4.  **Understandability:** Is the hypothesis explained in a way that
+            someone not fluent in quantum physics can follow?
 
 3.  **Provide a Final Ranking:**
     * Rank the responses from **1 (Most Insightful)** to

@@ -29,7 +29,7 @@ class LlmEvaluator:
 
   def evaluate_all_solutions(
     self, question: str, responses: dict[str, str], true_answer: str
-  ) -> dict[str, float | None]:
+  ) -> dict[str, tuple[float | None, str]]:
     """Uses the injected LLM client to grade all answers at once.
 
     Args:
@@ -38,7 +38,8 @@ class LlmEvaluator:
         true_answer: The correct answer to the question.
 
     Returns:
-        Dictionary mapping model names to scores (1-5) or None if parsing failed.
+        Dictionary mapping model names to tuples of (score, reasoning).
+        Score is 1-5 or None if parsing failed.
     """
     # Format all responses for the prompt
     response_block = ""
@@ -55,8 +56,28 @@ class LlmEvaluator:
       {response_block}
     """)
 
-    # Create JSON schema for structured output
+    # Create JSON schema for structured output with scores and reasoning
     model_names = list(responses.keys())
+
+    # Build properties for each model with score and reasoning
+    model_properties = {}
+    for model_name in model_names:
+      model_properties[model_name] = {
+        "type": "object",
+        "properties": {
+          "score": {
+            "type": "integer",
+            "description": f"Score for {model_name} (1-5)",
+          },
+          "reasoning": {
+            "type": "string",
+            "description": f"Brief explanation for the score given to {model_name}",
+          },
+        },
+        "required": ["score", "reasoning"],
+        "additionalProperties": False,
+      }
+
     response_format = {
       "type": "json_schema",
       "json_schema": {
@@ -65,20 +86,14 @@ class LlmEvaluator:
         "schema": {
           "type": "object",
           "properties": {
-            "scores": {
+            "evaluations": {
               "type": "object",
-              "properties": {
-                model_name: {
-                  "type": "integer",
-                  "description": f"Score for {model_name} (1-5)",
-                }
-                for model_name in model_names
-              },
+              "properties": model_properties,
               "required": model_names,
               "additionalProperties": False,
             }
           },
-          "required": ["scores"],
+          "required": ["evaluations"],
           "additionalProperties": False,
         },
       },
@@ -90,30 +105,44 @@ class LlmEvaluator:
       )
       # Parse the JSON response
       response_data = json.loads(raw_response)
-      scores = response_data.get("scores", {})
+      evaluations = response_data.get("evaluations", {})
 
-      # Convert to float and validate
+      # Extract scores and reasoning for each model
       result = {}
       for model_name in model_names:
-        score = scores.get(model_name)
-        if score is not None:
-          result[model_name] = float(score)
+        evaluation = evaluations.get(model_name)
+        if evaluation is not None:
+          score = evaluation.get("score")
+          reasoning = evaluation.get("reasoning", "No reasoning provided")
+          if score is not None:
+            result[model_name] = (float(score), reasoning)
+          else:
+            logging.warning(
+              "Score for model %s not found in response from judge %s",
+              model_name,
+              self.client.model.value,
+            )
+            result[model_name] = (None, reasoning)
         else:
           logging.warning(
-            "Score for model %s not found in response from judge %s",
+            "Evaluation for model %s not found in response from judge %s",
             model_name,
             self.client.model.value,
           )
-          result[model_name] = None
+          result[model_name] = (None, "Evaluation failed")
 
       return result
 
     except (llm.LlmApiError, requests.exceptions.RequestException) as e:
       logging.error("Evaluator call failed: %s", e)
-      return {model_name: None for model_name in model_names}
+      return {
+        model_name: (None, f"API Error: {e}") for model_name in model_names
+      }
     except (json.JSONDecodeError, KeyError) as e:
       logging.error("Failed to parse evaluator JSON response: %s", e)
-      return {model_name: None for model_name in model_names}
+      return {
+        model_name: (None, f"Parse Error: {e}") for model_name in model_names
+      }
 
   def evaluate_solution(
     self, question: str, generated_response: str, true_answer: str

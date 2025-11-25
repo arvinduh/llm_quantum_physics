@@ -2,3 +2,5 @@ kagglehub
 python-dotenv
 absl-py
 colorlog
+nltk
+rouge-score

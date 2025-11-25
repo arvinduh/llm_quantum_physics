@@ -48,12 +48,12 @@ def start_analysis_table(
   with open(filepath, "a", encoding="utf-8") as f:
     f.write("## Analysis Table\n\n")
     # Header row
-    header = "| Response | F1 Score |"
+    header = "| Response | Token F1 | METEOR | ROUGE-L | Symbol F1 |"
     for evaluator in evaluator_names:
       header += f" {evaluator} |"
     f.write(header + "\n")
     # Separator row
-    separator = "| --- | --- |"
+    separator = "| --- | --- | --- | --- | --- |"
     for _ in evaluator_names:
       separator += " --- |"
     f.write(separator + "\n")
@@ -62,7 +62,10 @@ def start_analysis_table(
 def write_analysis_table_row(
   filepath: str,
   model_name: str,
-  f1_score: str,
+  token_f1: str,
+  meteor: str,
+  rouge_l: str,
+  symbol_f1: str,
   evaluator_scores: list[str],
 ) -> None:
   """Writes a single row to the analysis table.
@@ -70,14 +73,48 @@ def write_analysis_table_row(
   Args:
       filepath: Path to the markdown file.
       model_name: Name of the model.
-      f1_score: The F1 score as a formatted string.
+      token_f1: The token F1 score as a formatted string.
+      meteor: The METEOR score as a formatted string.
+      rouge_l: The ROUGE-L score as a formatted string.
+      symbol_f1: The symbol F1 score as a formatted string.
       evaluator_scores: List of scores from each evaluator.
   """
   with open(filepath, "a", encoding="utf-8") as f:
-    row = f"| {model_name} | {f1_score} |"
+    row = f"| {model_name} | {token_f1} | {meteor} | {rouge_l} | {symbol_f1} |"
     for score in evaluator_scores:
       row += f" {score} |"
     f.write(row + "\n")
+
+
+def start_evaluator_reasoning_section(filepath: str) -> None:
+  """Starts the evaluator reasoning section in the markdown file.
+
+  Args:
+      filepath: Path to the markdown file.
+  """
+  with open(filepath, "a", encoding="utf-8") as f:
+    f.write("\n## Evaluator Reasoning\n\n")
+
+
+def write_evaluator_reasoning(
+  filepath: str,
+  evaluator_name: str,
+  model_name: str,
+  score: str,
+  reasoning: str,
+) -> None:
+  """Writes an evaluator's reasoning for a specific model response.
+
+  Args:
+      filepath: Path to the markdown file.
+      evaluator_name: Name of the evaluator model.
+      model_name: Name of the model being evaluated.
+      score: The score given.
+      reasoning: The reasoning for the score.
+  """
+  with open(filepath, "a", encoding="utf-8") as f:
+    f.write(f"### {evaluator_name} → {model_name} ({score})\n\n")
+    f.write(f"{reasoning}\n\n")
 
 
 def write_unsolvable_header(filepath: str) -> None:

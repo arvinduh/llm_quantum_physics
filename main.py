@@ -41,7 +41,7 @@ def setup_colored_logging():
 # --- Constants ---
 DATASET_HANDLE: str = "mohammadbinaftab/physicsqa"
 UNSOLVABLE_QUESTIONS_PATH: str = "data/unsolvable.json"
-OUTPUT_DIR: str = "outputs"
+OUTPUT_DIR: str = "outputs/v2"
 
 # Define a flag for how many solvable questions to run
 _SOLVABLE_ITERATIONS = flags.DEFINE_integer(

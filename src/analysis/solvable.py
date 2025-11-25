@@ -153,11 +153,28 @@ def analyze_solvable_question(
   # 4. Phase 2: Cross-Evaluation (Batch mode)
   logging.info("Starting cross-evaluation")
 
-  # Calculate F1 scores
+  # Calculate deterministic scores for all responses
   for model_resp in all_responses:
     if not model_resp.response_text.startswith("API Error:"):
-      f1 = evaluation.f1_score(model_resp.response_text, true_answer)
-      model_resp.deterministic_scores.append(f1)
+      # Token F1 score
+      token_f1 = evaluation.f1_score(model_resp.response_text, true_answer)
+      model_resp.deterministic_scores.append(token_f1)
+
+      # METEOR score
+      meteor = evaluation.meteor_score_eval(
+        model_resp.response_text, true_answer
+      )
+      model_resp.deterministic_scores.append(meteor)
+
+      # ROUGE-L score
+      rouge_l = evaluation.rouge_l_score(model_resp.response_text, true_answer)
+      model_resp.deterministic_scores.append(rouge_l)
+
+      # Symbol/Math F1 score
+      symbol_f1 = evaluation.symbol_precision(
+        model_resp.response_text, true_answer
+      )
+      model_resp.deterministic_scores.append(symbol_f1)
 
   # Batch evaluate with all evaluators
   evaluator_results = {}  # Store results by evaluator name
@@ -185,8 +202,8 @@ def analyze_solvable_question(
 
       try:
         for future in as_completed(future_to_evaluator):
-          evaluator_name, scores = future.result()
-          evaluator_results[evaluator_name] = scores
+          evaluator_name, results = future.result()
+          evaluator_results[evaluator_name] = results
       except KeyboardInterrupt:
         logging.warning(
           "Keyboard interrupt received, canceling evaluator tasks..."
@@ -201,18 +218,16 @@ def analyze_solvable_question(
   for model_resp in all_responses:
     for evaluator_name in evaluator_names:
       if evaluator_name in evaluator_results:
-        scores = evaluator_results[evaluator_name]
-        if model_resp.model_name in scores:
-          score_value = scores[model_resp.model_name]
+        results = evaluator_results[evaluator_name]
+        if model_resp.model_name in results:
+          score_value, reasoning = results[model_resp.model_name]
           model_resp.llm_evaluations.append(
             CrossEvaluation(
               evaluator_model_name=evaluator_name,
               evaluation=evaluation.EvaluationScore(
                 metric_name="llm_logicality_score",
                 score=score_value,
-                reasoning=f"Score: {score_value}/5"
-                if score_value
-                else "Evaluation failed",
+                reasoning=reasoning,
               ),
             )
           )
@@ -226,6 +241,10 @@ def analyze_solvable_question(
 
   # Write analysis table rows
   _write_analysis_table_rows(markdown_path, all_responses)
+
+  # Write evaluator reasoning section
+  reporting.start_evaluator_reasoning_section(markdown_path)
+  _write_evaluator_reasoning(markdown_path, all_responses, evaluator_names)
 
   # 5. Compile and return the final report
   logging.info("Solvable question report saved to: %s", markdown_path)
@@ -242,12 +261,19 @@ def _write_analysis_table_rows(
 ) -> None:
   """Writes the analysis table rows to the markdown file."""
   for model_resp in responses:
-    # Get F1 score
-    f1_str = "N/A"
+    # Get deterministic scores
+    scores_dict = {}
     for score in model_resp.deterministic_scores:
-      if score.metric_name == "f1_score" and score.score is not None:
-        f1_str = f"{score.score:.3f}"
-        break
+      if score.score is not None:
+        scores_dict[score.metric_name] = f"{score.score:.3f}"
+      else:
+        scores_dict[score.metric_name] = "N/A"
+
+    # Get scores in order
+    token_f1 = scores_dict.get("token_f1", "N/A")
+    meteor = scores_dict.get("meteor", "N/A")
+    rouge_l = scores_dict.get("rouge_l", "N/A")
+    symbol_f1 = scores_dict.get("symbol_f1", "N/A")
 
     # Collect evaluator scores
     evaluator_scores = []
@@ -260,5 +286,34 @@ def _write_analysis_table_rows(
       evaluator_scores.append(score_val)
 
     reporting.write_analysis_table_row(
-      filepath, model_resp.model_name, f1_str, evaluator_scores
+      filepath,
+      model_resp.model_name,
+      token_f1,
+      meteor,
+      rouge_l,
+      symbol_f1,
+      evaluator_scores,
     )
+
+
+def _write_evaluator_reasoning(
+  filepath: str, responses: list[ModelResponse], evaluator_names: list[str]
+) -> None:
+  """Writes the evaluator reasoning section to the markdown file."""
+  for evaluator_name in evaluator_names:
+    for model_resp in responses:
+      # Find the evaluation from this evaluator for this response
+      for eval_item in model_resp.llm_evaluations:
+        if eval_item.evaluator_model_name == evaluator_name:
+          score_val = (
+            f"{int(eval_item.evaluation.score)}/5"
+            if eval_item.evaluation.score is not None
+            else "N/A"
+          )
+          reporting.write_evaluator_reasoning(
+            filepath,
+            evaluator_name,
+            model_resp.model_name,
+            score_val,
+            eval_item.evaluation.reasoning,
+          )
