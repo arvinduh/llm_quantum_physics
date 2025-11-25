@@ -61,7 +61,7 @@ def main(argv: Sequence[str]) -> None:
   solvable_reports: list[analysis.SolvableQuestionReport] = []
   for i in range(_SOLVABLE_ITERATIONS.value):
     logging.info("--- Solvable Iteration %d ---", i + 1)
-    report = analysis.one_solvable_question(
+    report = analysis.analyze_solvable_question(
       solver_clients=solver_clients,
       evaluator_clients=evaluator_clients,
       dataset=solvable_dataset,
@@ -73,7 +73,7 @@ def main(argv: Sequence[str]) -> None:
 
   # --- 4. Run Unsolvable Question Analysis ---
   logging.info("Running unsolvable question analysis...")
-  analysis.one_unsolvable_question(
+  analysis.analyze_unsolvable_questions(
     solver_clients=theorist_clients,
     ranking_clients=ranking_clients,
     dataset=unsolvable_dataset,

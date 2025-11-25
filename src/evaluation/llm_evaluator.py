@@ -1,87 +1,25 @@
-"""
-Defines evaluators for the quantum physics LLM benchmark.
-
-This module provides two types of evaluators:
-1.  **Deterministic Evaluators:** Fast, objective functions (e.g., F1).
-2.  **LLM-based Evaluator:** A class that uses an LLM to provide
-    qualitative scores (logicality) and rankings (novelty).
-"""
+"""LLM-based evaluation functionality."""
 
 import json
 import re
 import textwrap
-from collections import Counter
-from dataclasses import dataclass
 from typing import Final, Sequence
 
 import requests
 from absl import logging
 
-# Import your client, models, and prompts
 from src import llm
+from src.evaluation.models import EvaluationScore
 
 # A simple regex to parse the score from the evaluator's response
 _SCORE_PARSER: Final = re.compile(r"Score:\s*(\d)\/5")
-
-
-@dataclass(frozen=True)
-class EvaluationScore:
-  """A standardized dataclass for holding an evaluation result."""
-
-  metric_name: str
-  score: float | None  # Score (e.g., F1, 1-5) or None for ranking tasks
-  reasoning: str  # Justification, raw ranking text, or error message
-
-
-# --- 1. Deterministic Evaluators (Baseline) ---
-
-
-def _tokenize(text: str) -> Counter:
-  """A simple tokenizer for F1 calculation."""
-  tokens = re.findall(r"\b\w+\b", text.lower())
-  return Counter(tokens)
-
-
-def f1_score(generated_response: str, true_answer: str) -> EvaluationScore:
-  """Calculates the F1 score between token sets."""
-  gen_tokens = _tokenize(generated_response)
-  true_tokens = _tokenize(true_answer)
-
-  if not true_tokens and not gen_tokens:
-    return EvaluationScore(
-      metric_name="f1_score", score=1.0, reasoning="Both empty."
-    )
-  if not true_tokens or not gen_tokens:
-    return EvaluationScore(
-      metric_name="f1_score", score=0.0, reasoning="One is empty."
-    )
-
-  common = gen_tokens & true_tokens
-  num_common = sum(common.values())
-
-  precision = num_common / sum(gen_tokens.values())
-  recall = num_common / sum(true_tokens.values())
-
-  f1 = 0.0
-  if (precision + recall) > 0:
-    f1 = 2 * (precision * recall) / (precision + recall)
-
-  return EvaluationScore(
-    metric_name="f1_score",
-    score=f1,
-    reasoning=f"Precision: {precision:.3f}, Recall: {recall:.3f}",
-  )
-
-
-# --- 2. LLM-based Evaluator (Primary) ---
 
 
 class LlmEvaluator:
   """Uses an LLM to perform qualitative evaluations."""
 
   def __init__(self, judge_client: llm.LlmClient):
-    """
-    Initializes the evaluator with a specific "judge" LLM client.
+    """Initializes the evaluator with a specific "judge" LLM client.
 
     Args:
         judge_client: An initialized LlmClient to use for evaluation.
@@ -196,8 +134,6 @@ class LlmEvaluator:
       "Requesting LLM-based logicality score from judge: %s",
       self.client.model.value,
     )
-    # The client should already have the system prompt set
-    # from when it was initialized (e.g., by `get_evaluator_models`).
 
     user_prompt = textwrap.dedent(f"""
       ## Question:
@@ -242,7 +178,6 @@ class LlmEvaluator:
       "Requesting LLM-based ranking from judge: %s",
       self.client.model.value,
     )
-    # The client should already have the ranking system prompt.
 
     # Format the list of responses for the prompt
     response_block = ""
@@ -256,6 +191,7 @@ class LlmEvaluator:
       ## Generated Responses:
       {response_block}
     """)
+
     try:
       raw_ranking_text = self.client.call_api(user_prompt)
       return EvaluationScore(
