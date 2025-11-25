@@ -9,7 +9,7 @@ from src.analysis.models import (
   UnsolvableQuestionReport,
 )
 from src.analysis.solvable import analyze_solvable_question
-from src.analysis.unsolvable import analyze_unsolvable_questions
+from src.analysis.unsolvable import analyze_unsolvable_question
 
 __all__ = [
   "CrossEvaluation",
@@ -19,5 +19,5 @@ __all__ = [
   "CrossRanking",
   "UnsolvableQuestionReport",
   "analyze_solvable_question",
-  "analyze_unsolvable_questions",
+  "analyze_unsolvable_question",
 ]

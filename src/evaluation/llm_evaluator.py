@@ -25,10 +25,6 @@ class LlmEvaluator:
         judge_client: An initialized LlmClient to use for evaluation.
             This client should have the appropriate evaluator prompt.
     """
-    logging.info(
-      "Initializing LlmEvaluator with judge client: %s",
-      judge_client.model.value,
-    )
     self.client = judge_client
 
   def evaluate_all_solutions(
@@ -44,11 +40,6 @@ class LlmEvaluator:
     Returns:
         Dictionary mapping model names to scores (1-5) or None if parsing failed.
     """
-    logging.info(
-      "Requesting batch LLM-based logicality scores from judge: %s",
-      self.client.model.value,
-    )
-
     # Format all responses for the prompt
     response_block = ""
     for model_name, response_text in responses.items():
@@ -80,8 +71,6 @@ class LlmEvaluator:
                 model_name: {
                   "type": "integer",
                   "description": f"Score for {model_name} (1-5)",
-                  "minimum": 1,
-                  "maximum": 5,
                 }
                 for model_name in model_names
               },
@@ -120,21 +109,16 @@ class LlmEvaluator:
       return result
 
     except (llm.LlmApiError, requests.exceptions.RequestException) as e:
-      logging.error("LLM evaluator call failed: %s", e)
+      logging.error("Evaluator call failed: %s", e)
       return {model_name: None for model_name in model_names}
     except (json.JSONDecodeError, KeyError) as e:
-      logging.error("Failed to parse JSON response from evaluator: %s", e)
+      logging.error("Failed to parse evaluator JSON response: %s", e)
       return {model_name: None for model_name in model_names}
 
   def evaluate_solution(
     self, question: str, generated_response: str, true_answer: str
   ) -> EvaluationScore:
     """Uses the injected LLM client to grade a single answer."""
-    logging.info(
-      "Requesting LLM-based logicality score from judge: %s",
-      self.client.model.value,
-    )
-
     user_prompt = textwrap.dedent(f"""
       ## Question:
       {question}
@@ -163,7 +147,7 @@ class LlmEvaluator:
         reasoning=raw_response,
       )
     except (llm.LlmApiError, requests.exceptions.RequestException) as e:
-      logging.error("LLM evaluator call failed: %s", e)
+      logging.error("Evaluator call failed: %s", e)
       return EvaluationScore(
         metric_name="llm_logicality_score",
         score=None,
@@ -174,11 +158,6 @@ class LlmEvaluator:
     self, question: str, responses: Sequence[str]
   ) -> EvaluationScore:
     """Uses the injected LLM client to rank hypotheses."""
-    logging.info(
-      "Requesting LLM-based ranking from judge: %s",
-      self.client.model.value,
-    )
-
     # Format the list of responses for the prompt
     response_block = ""
     for i, resp in enumerate(responses, 1):
@@ -200,7 +179,7 @@ class LlmEvaluator:
         reasoning=raw_ranking_text,
       )
     except (llm.LlmApiError, requests.exceptions.RequestException) as e:
-      logging.error("LLM evaluator call failed: %s", e)
+      logging.error("Ranker call failed: %s", e)
       return EvaluationScore(
         metric_name="llm_hypothesis_ranking",
         score=None,

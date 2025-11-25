@@ -38,7 +38,7 @@ class JsonLoader(BaseQuestionLoader):
     # Call super().__init__ after questions are loaded.
     super().__init__()
     logging.info(
-      "JsonLoader initialized with %d questions from %s",
+      "Loaded %d questions from %s",
       len(self),
       self.file_path,
     )

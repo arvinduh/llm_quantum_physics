@@ -34,35 +34,64 @@ def _parse_api_error_message(response: requests.Response) -> str:
   """
   try:
     data = response.json()
-    message = data.get("error", {}).get("message", "")
 
-    if not message:
-      return response.text
+    # Try to get the error message from various possible locations
+    error_obj = data.get("error", {})
+
+    # Check for nested error structure
+    if isinstance(error_obj, dict):
+      message = error_obj.get("message", "")
+      code = error_obj.get("code", "")
+      error_type = error_obj.get("type", "")
+
+      # Get provider error if available
+      metadata = error_obj.get("metadata", {})
+      provider_message = metadata.get("raw", "")
+
+      # Build detailed error message
+      parts = []
+      if error_type:
+        parts.append(f"[{error_type}]")
+      if code:
+        parts.append(f"Code: {code}")
+      if message:
+        parts.append(message)
+      if provider_message and provider_message != message:
+        parts.append(f"Provider: {provider_message}")
+
+      if parts:
+        return " | ".join(parts)
+
+    # Fallback to simple message
+    if isinstance(error_obj, str):
+      return error_obj
+
+    message = data.get("message", "")
+    if message:
+      return message
 
     # Handle the 402 "Not enough tokens" error
-    token_match = re.search(
-      r"You requested up to (\d+) tokens, but can only afford (\d+)",
-      message,
-    )
-    if token_match:
-      requested = token_match.group(1)
-      afforded = token_match.group(2)
-      return (
-        f"Not enough tokens: Requested {requested}, can only afford {afforded}."
+    if "error" in data:
+      full_error = str(data["error"])
+      token_match = re.search(
+        r"You requested up to (\d+) tokens, but can only afford (\d+)",
+        full_error,
       )
+      if token_match:
+        requested = token_match.group(1)
+        afforded = token_match.group(2)
+        return f"Not enough tokens: Requested {requested}, can only afford {afforded}."
 
-    # Handle the 403 "Key limit exceeded" error
-    if "Key limit exceeded (total limit)" in message:
-      return "Key limit exceeded (total limit)."
+      # Handle the 403 "Key limit exceeded" error
+      if "Key limit exceeded (total limit)" in full_error:
+        return "Key limit exceeded (total limit)."
 
-    return message
+    return response.text[:500]  # Limit response text length
 
   except requests.exceptions.JSONDecodeError:
-    return response.text
-  except Exception:
-    pass
-
-  return response.text
+    return f"Non-JSON response: {response.text[:200]}"
+  except Exception as e:
+    return f"Error parsing response: {e} | Raw: {response.text[:200]}"
 
 
 class LlmClient:
@@ -160,28 +189,32 @@ class LlmClient:
         if response.ok:
           elapsed_time = time.time() - start_time
           logging.info(
-            "LLM API call successful for model %s (Attempt %d/%d) - took %.2f seconds",
+            "API call successful: %s (%.2fs)",
             self.model.value,
-            attempt + 1,
-            self.max_retries,
             elapsed_time,
           )
           data = response.json()
           return data["choices"][0]["message"]["content"]
-
+        elif response.status_code == requests.codes.bad_request:
+          error_message = _parse_api_error_message(response)
+          logging.error(
+            "Bad request (400) for %s: %s",
+            self.model.value,
+            error_message,
+          )
+          break
         elif response.status_code in {
           requests.codes.too_many_requests,
           requests.codes.request_timeout,
           requests.codes.service_unavailable,
         }:
           logging.warning(
-            "Transient error (status %d) for model %s (Attempt %d/%d). "
-            "Retrying in %.2f s...",
+            "Transient error %d for %s, retrying in %.2fs (attempt %d/%d)",
             response.status_code,
             self.model.value,
+            backoff_time,
             attempt + 1,
             self.max_retries,
-            backoff_time,
           )
           time.sleep(backoff_time)
           backoff_time *= 2 * (1 + random.random())
@@ -190,18 +223,16 @@ class LlmClient:
         else:
           error_message = _parse_api_error_message(response)
           logging.error(
-            "Unrecoverable error (status %d) for model %s (Attempt %d/%d): %s",
+            "Unrecoverable error %d for %s: %s",
             response.status_code,
             self.model.value,
-            attempt + 1,
-            self.max_retries,
             error_message,
           )
           break
 
       except requests.exceptions.RequestException as e:
         logging.warning(
-          "Network error for model %s (Attempt %d/%d): %s. Retrying...",
+          "Network error for %s, retrying (attempt %d/%d): %s",
           self.model.value,
           attempt + 1,
           self.max_retries,
@@ -212,8 +243,7 @@ class LlmClient:
 
     if attempt + 1 >= self.max_retries:
       logging.error(
-        "Max retries (%d) exceeded for LLM API call to %s.",
-        self.max_retries,
+        "Max retries exceeded for %s",
         self.model.value,
       )
 

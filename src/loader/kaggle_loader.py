@@ -98,7 +98,7 @@ class KaggleLoader(BaseQuestionLoader):
     # _load_all_identifiers() which depends on it.
     super().__init__()
     logging.info(
-      "KaggleLoader initialized with %d questions from %s",
+      "Loaded %d questions from %s",
       len(self),
       dataset_handle,
     )
@@ -117,7 +117,6 @@ class KaggleLoader(BaseQuestionLoader):
     """Reads a specific question file from the dataset."""
     file_name = f"{identifier}.json"
     path = os.path.join(self.dataset_path, file_name)
-    logging.info("Reading question file: %s", path)
 
     with open(path, "r", encoding="utf-8") as f:
       question_data = json.load(f)

@@ -1,10 +1,10 @@
 """Solvable question analysis functionality."""
 
-import logging
 import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import requests
+from absl import logging
 
 from src import evaluation, llm, reporting
 from src.analysis.models import (
@@ -68,14 +68,38 @@ def analyze_solvable_question(
   """
   import os
 
-  # 1. Get a random question
-  logging.info("Retrieving random solvable question")
-  try:
-    q_id, q_content = dataset.get_random_question()
-  except IndexError:
-    logging.warning("All random questions have been used. Resetting history.")
-    dataset.reset_random_history()
-    q_id, q_content = dataset.get_random_question()
+  # 1. Get a random question that hasn't been solved yet
+  os.makedirs(output_dir, exist_ok=True)
+
+  max_attempts = len(dataset.data) if hasattr(dataset, "data") else 1000
+  attempts = 0
+  q_id = None
+  q_content = None
+
+  while attempts < max_attempts:
+    try:
+      q_id, q_content = dataset.get_random_question()
+    except IndexError:
+      logging.warning("All random questions have been used. Resetting history.")
+      dataset.reset_random_history()
+      try:
+        q_id, q_content = dataset.get_random_question()
+      except IndexError:
+        raise ValueError("No questions available in dataset.") from None
+
+    # Check if this question has already been solved
+    markdown_path = os.path.join(output_dir, f"solvable_{q_id}.md")
+    if not os.path.exists(markdown_path):
+      break  # Found an unsolved question
+
+    logging.warning("Question %s already solved, finding another", q_id)
+    attempts += 1
+
+  if attempts >= max_attempts:
+    raise ValueError(
+      "All solvable questions have already been solved. "
+      "Delete output files or reset the output directory to run again."
+    )
 
   # 2. Extract data
   try:
@@ -88,10 +112,6 @@ def analyze_solvable_question(
     ) from e
   logging.info("Selected solvable question ID: %s", q_id)
 
-  # 3. Generate output path for this specific question
-  os.makedirs(output_dir, exist_ok=True)
-  markdown_path = os.path.join(output_dir, f"solvable_{q_id}.md")
-
   # Write question and true answer to markdown
   reporting.write_solvable_header(markdown_path, q_id, question, true_answer)
 
@@ -100,7 +120,7 @@ def analyze_solvable_question(
   valid_responses: dict[str, str] = {}  # For batch evaluation
   file_lock = threading.Lock()  # Protect concurrent file writes
 
-  logging.info("Querying %d solver models in parallel...", len(solver_clients))
+  logging.info("Querying %d solver models", len(solver_clients))
   with ThreadPoolExecutor(max_workers=len(solver_clients)) as executor:
     # Submit all tasks
     future_to_client = {
@@ -108,57 +128,85 @@ def analyze_solvable_question(
       for client in solver_clients
     }
 
-    # Collect results as they complete
-    for future in as_completed(future_to_client):
-      model_resp = future.result()
-      all_responses.append(model_resp)
+    try:
+      # Collect results as they complete
+      for future in as_completed(future_to_client):
+        model_resp = future.result()
+        all_responses.append(model_resp)
 
-      # Write response to markdown immediately (thread-safe)
-      with file_lock:
-        reporting.append_response(
-          markdown_path, model_resp.model_name, model_resp.response_text
-        )
+        # Write response to markdown immediately (thread-safe)
+        with file_lock:
+          reporting.append_response(
+            markdown_path, model_resp.model_name, model_resp.response_text
+          )
 
-      # Track valid responses for batch evaluation
-      if not model_resp.response_text.startswith("API Error:"):
-        valid_responses[model_resp.model_name] = model_resp.response_text
+        # Track valid responses for batch evaluation
+        if not model_resp.response_text.startswith("API Error:"):
+          valid_responses[model_resp.model_name] = model_resp.response_text
+    except KeyboardInterrupt:
+      logging.warning("Keyboard interrupt received, canceling solver tasks...")
+      for future in future_to_client:
+        future.cancel()
+      executor.shutdown(wait=False, cancel_futures=True)
+      raise
 
   # 4. Phase 2: Cross-Evaluation (Batch mode)
-  logging.info("Starting batch cross-evaluation phase")
-
-  # Initialize analysis table in markdown
-  reporting.start_analysis_table(
-    markdown_path,
-    list(valid_responses.keys()),
-    [c.model.value for c in evaluator_clients],
-  )
+  logging.info("Starting cross-evaluation")
 
   # Calculate F1 scores
   for model_resp in all_responses:
     if not model_resp.response_text.startswith("API Error:"):
-      logging.info("Running F1 score for %s", model_resp.model_name)
       f1 = evaluation.f1_score(model_resp.response_text, true_answer)
       model_resp.deterministic_scores.append(f1)
 
   # Batch evaluate with all evaluators
+  evaluator_results = {}  # Store results by evaluator name
+
   if valid_responses:
-    for evaluator_client in evaluator_clients:
+
+    def _run_evaluator(evaluator_client):
+      """Run a single evaluator and return results."""
       logging.info(
-        "Judge %s evaluating all responses in batch",
+        "Querying evaluator %s",
         evaluator_client.model.value,
       )
       judge = evaluation.LlmEvaluator(judge_client=evaluator_client)
       scores = judge.evaluate_all_solutions(
         question, valid_responses, true_answer
       )
+      return evaluator_client.model.value, scores
 
-      # Assign scores to corresponding responses
-      for model_resp in all_responses:
+    # Run all evaluators in parallel and collect results
+    with ThreadPoolExecutor(max_workers=len(evaluator_clients)) as executor:
+      future_to_evaluator = {
+        executor.submit(_run_evaluator, client): client
+        for client in evaluator_clients
+      }
+
+      try:
+        for future in as_completed(future_to_evaluator):
+          evaluator_name, scores = future.result()
+          evaluator_results[evaluator_name] = scores
+      except KeyboardInterrupt:
+        logging.warning(
+          "Keyboard interrupt received, canceling evaluator tasks..."
+        )
+        for future in future_to_evaluator:
+          future.cancel()
+        executor.shutdown(wait=False, cancel_futures=True)
+        raise
+
+  # Now assign scores to responses in the correct order
+  evaluator_names = [c.model.value for c in evaluator_clients]
+  for model_resp in all_responses:
+    for evaluator_name in evaluator_names:
+      if evaluator_name in evaluator_results:
+        scores = evaluator_results[evaluator_name]
         if model_resp.model_name in scores:
           score_value = scores[model_resp.model_name]
           model_resp.llm_evaluations.append(
             CrossEvaluation(
-              evaluator_model_name=evaluator_client.model.value,
+              evaluator_model_name=evaluator_name,
               evaluation=evaluation.EvaluationScore(
                 metric_name="llm_logicality_score",
                 score=score_value,
@@ -168,6 +216,13 @@ def analyze_solvable_question(
               ),
             )
           )
+
+  # Initialize analysis table in markdown AFTER all evaluations complete
+  reporting.start_analysis_table(
+    markdown_path,
+    list(valid_responses.keys()),
+    evaluator_names,
+  )
 
   # Write analysis table rows
   _write_analysis_table_rows(markdown_path, all_responses)

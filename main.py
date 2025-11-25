@@ -6,12 +6,37 @@ both solvable and unsolvable questions, and saves the results to
 markdown files.
 """
 
-import logging
+import logging as std_logging
 from typing import Sequence
 
-from absl import app, flags
+import colorlog
+from absl import app, flags, logging
 
 from src import analysis, llm, loader
+
+
+def setup_colored_logging():
+  """Configure colored logging output."""
+  handler = colorlog.StreamHandler()
+  handler.setFormatter(
+    colorlog.ColoredFormatter(
+      "%(log_color)s%(levelname).1s%(asctime)s.%(msecs)03d %(process)d [%(filename)s:%(lineno)d]%(reset)s %(message)s",
+      datefmt="%m%d %H:%M:%S",
+      log_colors={
+        "DEBUG": "cyan",
+        "INFO": "green",
+        "WARNING": "yellow",
+        "ERROR": "red",
+        "CRITICAL": "red,bg_white",
+      },
+    )
+  )
+
+  logger = std_logging.getLogger()
+  logger.handlers = []
+  logger.addHandler(handler)
+  logger.setLevel(std_logging.INFO)
+
 
 # --- Constants ---
 DATASET_HANDLE: str = "mohammadbinaftab/physicsqa"
@@ -25,6 +50,13 @@ _SOLVABLE_ITERATIONS = flags.DEFINE_integer(
   "The number of random solvable questions to run.",
 )
 
+# Define a flag for how many unsolvable questions to run
+_UNSOLVABLE_ITERATIONS = flags.DEFINE_integer(
+  "unsolvable_iterations",
+  0,
+  "The number of unsolvable questions to run.",
+)
+
 
 # --- Main Execution ---
 
@@ -32,6 +64,8 @@ _SOLVABLE_ITERATIONS = flags.DEFINE_integer(
 def main(argv: Sequence[str]) -> None:
   """Main execution function for the benchmark."""
   del argv
+
+  setup_colored_logging()
 
   # --- 1. Load Datasets ---
   logging.info("Loading solvable questions from Kaggle: %s", DATASET_HANDLE)
@@ -46,7 +80,7 @@ def main(argv: Sequence[str]) -> None:
   # --- 2. Initialize All Clients ---
   # As per your new functions in `llm.py`, we initialize
   # lists of clients, each with the correct system prompt.
-  logging.info("Initializing LLM clients...")
+  logging.info("Initializing LLM clients")
   solver_clients = llm.get_solvable_models()
   evaluator_clients = llm.get_evaluator_models()
   theorist_clients = llm.get_unsolvable_models()
@@ -54,12 +88,14 @@ def main(argv: Sequence[str]) -> None:
 
   # --- 3. Run Solvable Question Analysis ---
   logging.info(
-    "Running %d solvable question iteration(s)...",
+    "Running %d solvable question iteration(s)",
     _SOLVABLE_ITERATIONS.value,
   )
   solvable_reports: list[analysis.SolvableQuestionReport] = []
   for i in range(_SOLVABLE_ITERATIONS.value):
-    logging.info("--- Solvable Iteration %d ---", i + 1)
+    logging.info(
+      "Starting solvable iteration %d/%d", i + 1, _SOLVABLE_ITERATIONS.value
+    )
     report = analysis.analyze_solvable_question(
       solver_clients=solver_clients,
       evaluator_clients=evaluator_clients,
@@ -67,18 +103,32 @@ def main(argv: Sequence[str]) -> None:
       output_dir=OUTPUT_DIR,
     )
     solvable_reports.append(report)
-    logging.info("--- Finished Iteration %d ---", i + 1)
+    logging.info(
+      "Completed solvable iteration %d/%d", i + 1, _SOLVABLE_ITERATIONS.value
+    )
 
   # --- 4. Run Unsolvable Question Analysis ---
-  logging.info("Running unsolvable question analysis...")
-  analysis.analyze_unsolvable_questions(
-    solver_clients=theorist_clients,
-    ranking_clients=ranking_clients,
-    dataset=unsolvable_dataset,
-    output_dir=OUTPUT_DIR,
+  logging.info(
+    "Running %d unsolvable question iteration(s)",
+    _UNSOLVABLE_ITERATIONS.value,
   )
-
-  logging.info("Unsolvable analysis complete. Reports saved to %s", OUTPUT_DIR)
+  unsolvable_reports: list[analysis.UnsolvableQuestionReport] = []
+  for i in range(_UNSOLVABLE_ITERATIONS.value):
+    logging.info(
+      "Starting unsolvable iteration %d/%d", i + 1, _UNSOLVABLE_ITERATIONS.value
+    )
+    report = analysis.analyze_unsolvable_question(
+      solver_clients=theorist_clients,
+      ranking_clients=ranking_clients,
+      dataset=unsolvable_dataset,
+      output_dir=OUTPUT_DIR,
+    )
+    unsolvable_reports.append(report)
+    logging.info(
+      "Completed unsolvable iteration %d/%d",
+      i + 1,
+      _UNSOLVABLE_ITERATIONS.value,
+    )
 
   logging.info("Benchmark run complete.")
 

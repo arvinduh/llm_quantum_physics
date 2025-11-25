@@ -1,3 +1,4 @@
 kagglehub
 python-dotenv
 absl-py
+colorlog
