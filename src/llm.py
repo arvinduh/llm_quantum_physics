@@ -2,6 +2,7 @@
 
 import os
 import random
+import re
 import time
 from enum import Enum
 
@@ -32,15 +33,73 @@ class LlmApiError(Exception):
   """Raised when the LLM API call fails after all retries."""
 
 
+def _parse_api_error_message(response: requests.Response) -> str:
+  """Parses a JSON error for a concise, human-readable message.
+
+  If the response is not a known error format, it returns the
+  full text or the extracted 'message' field.
+
+  Args:
+      response: The requests.Response object.
+
+  Returns:
+      A concise error message or the original response text.
+  """
+  try:
+    data = response.json()
+    message = data.get("error", {}).get("message", "")
+
+    if not message:
+      # No 'message' field found, return the full raw text
+      return response.text
+
+    # --- Handle specific, known errors concisely ---
+
+    # 1. Handle the 402 "Not enough tokens" error
+    # This regex extracts the requested and afforded token counts.
+    token_match = re.search(
+      r"You requested up to (\d+) tokens, but can only afford (\d+)",
+      message,
+    )
+    if token_match:
+      requested = token_match.group(1)
+      afforded = token_match.group(2)
+      return (
+        f"Not enough tokens: Requested {requested}, can only afford {afforded}."
+      )
+
+    # 2. Handle the 403 "Key limit exceeded" error
+    if "Key limit exceeded (total limit)" in message:
+      # The rest of the message is just a URL, so we can trim it.
+      return "Key limit exceeded (total limit)."
+
+    # --- Fallback for other errors ---
+
+    # For any other JSON error, just return its message field
+    return message
+
+  except requests.exceptions.JSONDecodeError:
+    # The response was not JSON, so return the raw text
+    return response.text
+  except Exception:
+    # Catch any other unexpected parsing error (e.g., missing keys)
+    # and fall back to the raw text to be safe.
+    pass
+
+  # Final fallback
+  return response.text
+
+
 class LlmClient:
   """LLM API client with retry and fallback logic.
 
   Attributes:
-    model (Model): The primary model to use for API calls.
-    api_key (str): The API key for authentication.
-    max_retries (int): Maximum number of retries for transient errors.
-    initial_backoff (float): Initial backoff time in seconds for retries.
-    system_prompt (str): The system prompt to send with requests.
+      model (Model): The primary model to use for API calls.
+      api_key (str): The API key for authentication.
+      max_retries (int): Maximum number of retries for transient errors.
+      initial_backoff (float): Initial backoff time in seconds for retries.
+      system_prompt (str): The system prompt to send with requests.
+      max_tokens (int): The maximum number of tokens to request from the model.
   """
 
   def __init__(
@@ -50,15 +109,17 @@ class LlmClient:
     max_retries: int = _MAX_RETRIES,
     initial_backoff: float = _INITIAL_BACKOFF,
     system_prompt: str | None = None,
+    max_tokens: int = 10000,
   ):
     """Initializes the client.
 
     Args:
-      model: The primary model to use for API calls.
-      api_key: The API key for authentication. If None, loaded from .env.
-      max_retries: Maximum number of retries for transient errors.
-      initial_backoff: Initial backoff time in seconds for retries.
-      system_prompt: The system prompt to send with requests.
+        model: The primary model to use for API calls.
+        api_key: The API key for authentication. If None, loaded from .env.
+        max_retries: Maximum number of retries for transient errors.
+        initial_backoff: Initial backoff time in seconds for retries.
+        system_prompt: The system prompt to send with requests.
+        max_tokens: The maximum number of tokens to request from the model.
     """
     # Load API key from .env if not provided
     dotenv.load_dotenv()
@@ -74,6 +135,7 @@ class LlmClient:
     self.max_retries = max_retries
     self.initial_backoff = initial_backoff
     self.system_prompt = system_prompt
+    self.max_tokens = max_tokens
 
     # Use standard header names; some proxies/hosts reject nonstandard keys.
     self._headers = {
@@ -81,24 +143,26 @@ class LlmClient:
       "Content-Type": "application/json",
     }
 
-  def call_api(self, prompt: str) -> str:
+  def call_api(self, prompt: str, response_format: dict | None = None) -> str:
     """Handles the core logic of calling the LLM API with retries.
 
     Args:
-      prompt: The user-facing prompt to send to the model.
+        prompt: The user-facing prompt to send to the model.
+        response_format: Optional structured output format specification.
 
     Returns:
-      The text content of the model's response.
+        The text content of the model's response.
 
     Raises:
-      LlmApiError: If the API call fails after all retries.
-      requests.exceptions.HTTPError: For unrecoverable HTTP errors.
+        LlmApiError: If the API call fails after all retries.
+        requests.exceptions.HTTPError: For unrecoverable HTTP errors.
     """
     payload = {
       "model": self.model.value,  # Use the enum's string value
       "messages": [
         {"role": "user", "content": prompt},
       ],
+      "max_tokens": self.max_tokens,
     }
 
     if self.system_prompt:
@@ -106,7 +170,11 @@ class LlmClient:
         0, {"role": "system", "content": self.system_prompt}
       )
 
+    if response_format:
+      payload["response_format"] = response_format
+
     backoff_time = self.initial_backoff
+    start_time = time.time()
 
     # Attempt the API call with retries
     for attempt in range(self.max_retries):
@@ -119,11 +187,13 @@ class LlmClient:
         )
 
         if response.ok:
+          elapsed_time = time.time() - start_time
           logging.info(
-            "LLM API call successful for model %s (Attempt %d/%d)",
+            "LLM API call successful for model %s (Attempt %d/%d) - took %.2f seconds",
             self.model.value,
             attempt + 1,
             self.max_retries,
+            elapsed_time,
           )
           data = response.json()
           return data["choices"][0]["message"]["content"]
@@ -134,7 +204,8 @@ class LlmClient:
           requests.codes.service_unavailable,
         }:
           logging.warning(
-            "Transient error (status %d) for model %s (Attempt %d/%d). Retrying in %.2f s...",
+            "Transient error (status %d) for model %s (Attempt %d/%d). "
+            "Retrying in %.2f s...",
             response.status_code,
             self.model.value,
             attempt + 1,
@@ -147,13 +218,15 @@ class LlmClient:
 
         else:
           # Unrecoverable error
+          # Parse the error for a cleaner message
+          error_message = _parse_api_error_message(response)
           logging.error(
             "Unrecoverable error (status %d) for model %s (Attempt %d/%d): %s",
             response.status_code,
             self.model.value,
             attempt + 1,
             self.max_retries,
-            response.text,
+            error_message,  # Use the new concise message
           )
           break
 
@@ -186,10 +259,10 @@ def initialize_models(system_prompt: str) -> list[LlmClient]:
   """Initializes LLM clients for all selected models.
 
   Args:
-    system_prompt (str): The system prompt to use for all clients.
+      system_prompt (str): The system prompt to use for all clients.
 
   Returns:
-    A list of initialized LlmClient instances.
+      A list of initialized LlmClient instances.
   """
 
   return [
@@ -197,37 +270,37 @@ def initialize_models(system_prompt: str) -> list[LlmClient]:
   ]
 
 
-def get_solvable_models() -> list[Model]:
+def get_solvable_models() -> list[LlmClient]:
   """Returns a list of models suitable for solving standard physics problems.
 
   Returns:
-    A list of Model enum members.
+      A list of LlmClient instances.
   """
   return initialize_models(prompts.PHYSICS_SOLVER_PROMPT)
 
 
-def get_unsolvable_models() -> list[Model]:
+def get_unsolvable_models() -> list[LlmClient]:
   """Returns a list of models suitable for tackling unsolvable physics problems.
 
   Returns:
-    A list of Model enum members.
+      A list of LlmClient instances.
   """
   return initialize_models(prompts.PHYSICS_THEORIST_PROMPT)
 
 
-def get_evaluator_models() -> list[Model]:
+def get_evaluator_models() -> list[LlmClient]:
   """Returns a list of models suitable for evaluating physics problem solutions.
 
   Returns:
-    A list of Model enum members.
+      A list of LlmClient instances.
   """
   return initialize_models(prompts.POINTWISE_EVAL_PROMPT)
 
 
-def get_ranking_models() -> list[Model]:
+def get_ranking_models() -> list[LlmClient]:
   """Returns a list of models suitable for judging physics problem solutions.
 
   Returns:
-    A list of Model enum members.
+      A list of LlmClient instances.
   """
   return initialize_models(prompts.RANKING_EVAL_PROMPT)

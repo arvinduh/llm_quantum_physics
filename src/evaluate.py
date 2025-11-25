@@ -7,6 +7,7 @@ This module provides two types of evaluators:
     qualitative scores (logicality) and rankings (novelty).
 """
 
+import json
 import re
 import textwrap
 from collections import Counter
@@ -17,7 +18,7 @@ import requests
 from absl import logging
 
 # Import your client, models, and prompts
-from src import llm, prompts
+from src import llm
 
 # A simple regex to parse the score from the evaluator's response
 _SCORE_PARSER: Final = re.compile(r"Score:\s*(\d)\/5")
@@ -78,30 +79,126 @@ def f1_score(generated_response: str, true_answer: str) -> EvaluationScore:
 class LlmEvaluator:
   """Uses an LLM to perform qualitative evaluations."""
 
-  def __init__(self, judge_model: llm.Model = llm.Model.GEMINI_PRO_2_5):
+  def __init__(self, judge_client: llm.LlmClient):
     """
-    Initializes the evaluator with a specific "judge" LLM.
-
-    It's highly recommended to use a top-tier model (like GPT-4o or
-    Claude 3 Opus) as the judge for the most reliable results.
+    Initializes the evaluator with a specific "judge" LLM client.
 
     Args:
-      judge_model: The model to use for performing the evaluation.
+        judge_client: An initialized LlmClient to use for evaluation.
+            This client should have the appropriate evaluator prompt.
     """
-    logging.info("Initializing LlmEvaluator with judge model: %s", judge_model)
-    self.client = llm.LlmClient(model=judge_model)
+    logging.info(
+      "Initializing LlmEvaluator with judge client: %s",
+      judge_client.model.value,
+    )
+    self.client = judge_client
+
+  def evaluate_all_solutions(
+    self, question: str, responses: dict[str, str], true_answer: str
+  ) -> dict[str, float | None]:
+    """Uses the injected LLM client to grade all answers at once.
+
+    Args:
+        question: The physics question being evaluated.
+        responses: Dictionary mapping model names to their response texts.
+        true_answer: The correct answer to the question.
+
+    Returns:
+        Dictionary mapping model names to scores (1-5) or None if parsing failed.
+    """
+    logging.info(
+      "Requesting batch LLM-based logicality scores from judge: %s",
+      self.client.model.value,
+    )
+
+    # Format all responses for the prompt
+    response_block = ""
+    for model_name, response_text in responses.items():
+      response_block += f"## Response from {model_name}:\n{response_text}\n\n"
+
+    user_prompt = textwrap.dedent(f"""
+      ## Question:
+      {question}
+
+      ## True Answer:
+      {true_answer}
+
+      {response_block}
+    """)
+
+    # Create JSON schema for structured output
+    model_names = list(responses.keys())
+    response_format = {
+      "type": "json_schema",
+      "json_schema": {
+        "name": "evaluation_scores",
+        "strict": True,
+        "schema": {
+          "type": "object",
+          "properties": {
+            "scores": {
+              "type": "object",
+              "properties": {
+                model_name: {
+                  "type": "integer",
+                  "description": f"Score for {model_name} (1-5)",
+                  "minimum": 1,
+                  "maximum": 5,
+                }
+                for model_name in model_names
+              },
+              "required": model_names,
+              "additionalProperties": False,
+            }
+          },
+          "required": ["scores"],
+          "additionalProperties": False,
+        },
+      },
+    }
+
+    try:
+      raw_response = self.client.call_api(
+        user_prompt, response_format=response_format
+      )
+      # Parse the JSON response
+      response_data = json.loads(raw_response)
+      scores = response_data.get("scores", {})
+
+      # Convert to float and validate
+      result = {}
+      for model_name in model_names:
+        score = scores.get(model_name)
+        if score is not None:
+          result[model_name] = float(score)
+        else:
+          logging.warning(
+            "Score for model %s not found in response from judge %s",
+            model_name,
+            self.client.model.value,
+          )
+          result[model_name] = None
+
+      return result
+
+    except (llm.LlmApiError, requests.exceptions.RequestException) as e:
+      logging.error("LLM evaluator call failed: %s", e)
+      return {model_name: None for model_name in model_names}
+    except (json.JSONDecodeError, KeyError) as e:
+      logging.error("Failed to parse JSON response from evaluator: %s", e)
+      return {model_name: None for model_name in model_names}
 
   def evaluate_solution(
     self, question: str, generated_response: str, true_answer: str
   ) -> EvaluationScore:
-    """Uses an LLM to grade the logicality of a single answer."""
+    """Uses the injected LLM client to grade a single answer."""
     logging.info(
       "Requesting LLM-based logicality score from judge: %s",
       self.client.model.value,
     )
-    self.client.system_prompt = prompts.POINTWISE_EVAL_PROMPT
+    # The client should already have the system prompt set
+    # from when it was initialized (e.g., by `get_evaluator_models`).
 
-    # Generate the user prompt for the judge
     user_prompt = textwrap.dedent(f"""
       ## Question:
       {question}
@@ -140,11 +237,12 @@ class LlmEvaluator:
   def rank_hypotheses(
     self, question: str, responses: Sequence[str]
   ) -> EvaluationScore:
-    """Uses an LLM to rank a list of hypotheses for an unsolved problem."""
+    """Uses the injected LLM client to rank hypotheses."""
     logging.info(
-      "Requesting LLM-based ranking from judge: %s", self.client.model.value
+      "Requesting LLM-based ranking from judge: %s",
+      self.client.model.value,
     )
-    self.client.system_prompt = prompts.RANKING_EVAL_PROMPT
+    # The client should already have the ranking system prompt.
 
     # Format the list of responses for the prompt
     response_block = ""

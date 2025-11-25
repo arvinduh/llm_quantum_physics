@@ -71,17 +71,17 @@ or line of reasoning that could lead to a solution.
 
 
 # ----------------------------------------------------------------------------
-# PROMPT 3: For EVALUATING Solvable Answers (Pointwise Grader)
+# PROMPT 3: For EVALUATING Solvable Answers (Batch Grader)
 #
-# Task: To act as a teaching assistant and grade a single answer.
+# Task: To act as a teaching assistant and grade multiple answers at once.
 # ----------------------------------------------------------------------------
 
 POINTWISE_EVAL_PROMPT = """
 You are an expert quantum physicist acting as a teaching assistant.
-You will be given a Question, a "True Answer", and a "Generated Answer".
+You will be given a Question, a "True Answer", and multiple "Generated Answers" from different models.
 
-Your task is to evaluate the logicality and correctness of the "Generated Answer"
-on a scale of 1 to 5 and provide a brief justification.
+Your task is to evaluate the logicality and correctness of each "Generated Answer"
+on a scale of 1 to 5.
 
 - **1/5:** Completely incorrect, nonsensical, or a dangerous hallucination.
 - **2/5:** Contains major logical flaws or significant factual errors.
@@ -89,10 +89,10 @@ on a scale of 1 to 5 and provide a brief justification.
 - **4/5:** Mostly correct, but with minor errors or suboptimal explanations.
 - **5/5:** Perfectly correct, logical, and well-explained.
 
-## Evaluation:
-Provide a 1-2 sentence justification for your score, then state the score clearly.
-**Justification:** [Your justification]
-**Score:** [Your score]/5
+## Instructions:
+You will receive responses from multiple models. Evaluate each one and return your scores
+in a structured JSON format. The JSON should be a dictionary where the key is the model name
+and the value is the score (1-5).
 """
 
 
